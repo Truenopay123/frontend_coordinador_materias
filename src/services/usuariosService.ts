@@ -3,6 +3,8 @@ import type { Usuario, UsuarioEditDto } from '../interfaces/usuario'
 
 const base = '/usuarios'
 
+
+
 export async function getUsuarios(filtro?: string): Promise<Usuario[]> {
   let url = base
   if (filtro === 'COORDINADOR') url = `${base}/coordinadores`
@@ -43,4 +45,10 @@ export async function updateUsuarioStatus(id: number, activo: boolean): Promise<
 
 export async function deleteUsuario(id: number): Promise<void> {
   await api.delete(`${base}/${id}`)
+}
+
+export async function createUsuario(usuario: Partial<Usuario>): Promise<Usuario> {
+  // El backend espera la entidad completa según su DTO; enviamos los campos proporcionados.
+  const res = await api.post<Usuario>(base, usuario)
+  return res.data
 }
