@@ -7,7 +7,6 @@ import {
   Search,
   Trash2,
   Eye,
-  EyeOff,
   RefreshCw,
   Filter,
   X,
@@ -21,24 +20,13 @@ import {
   Calendar
 } from 'lucide-react'
 
-const API_BASE_URL = 'http://localhost:8080/api/usuarios'
-
-interface Usuario {
-  id: number;
-  nombre: string;
-  email: string;
-  tipoUsuario: 'COORDINADOR' | 'PROFESOR' | 'ALUMNO';
-  activo: boolean;
-  divisiones?: number[];
-  matricula?: string;
-  carrera?: string;
-  semestre?: number;
-  areaCoordinacion?: string;
-  nivelAcceso?: string;
-}
+import type { Usuario, UsuarioEditDto, TipoUsuario } from '../interfaces/usuario'
+import { getUsuarios, updateUsuario, updateUsuarioStatus, deleteUsuario } from '../services/usuariosService'
 
 export default function Admin() {
   const [usuarios, setUsuarios] = useState<Usuario[]>([])
+  const [isEditing, setIsEditing] = useState(false)
+  const [editableUsuario, setEditableUsuario] = useState<UsuarioEditDto | null>(null)
   const [filtro, setFiltro] = useState('TODOS')
   const [busqueda, setBusqueda] = useState('')
   const [loading, setLoading] = useState(false)
@@ -55,16 +43,7 @@ export default function Admin() {
     setError(null)
     
     try {
-      let url = API_BASE_URL
-      
-      if (filtro === 'COORDINADOR') url += '/coordinadores'
-      else if (filtro === 'PROFESOR') url += '/profesores'
-      else if (filtro === 'ALUMNO') url += '/alumnos'
-      
-      const response = await fetch(url)
-      if (!response.ok) throw new Error('Error al cargar usuarios')
-      
-      const data = await response.json()
+      const data = await getUsuarios(filtro === 'TODOS' ? undefined : filtro)
       setUsuarios(data)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error desconocido')
@@ -76,20 +55,24 @@ export default function Admin() {
 
   // Simula el cambio local de estado
   const cambiarEstado = async (id: number, activo: boolean) => {
-    setUsuarios(prevUsuarios =>
-      prevUsuarios.map(u =>
-        u.id === id ? { ...u, activo: !activo } : u
-      )
-    )
-    console.log(`(Simulado) Estado del usuario ${id} cambiado a: ${!activo ? 'Activo' : 'Inactivo'}`)
+    // Optimistic update
+    setUsuarios(prev => prev.map(u => u.id === id ? { ...u, activo: !activo } : u))
+    try {
+      await updateUsuarioStatus(id, !activo)
+    } catch (err) {
+      // revertir si hay error
+      setUsuarios(prev => prev.map(u => u.id === id ? { ...u, activo } : u))
+      alert('Error al actualizar estado: ' + (err instanceof Error ? err.message : 'Error desconocido'))
+    }
   }
 
   const eliminarUsuario = async (id: number) => {
     if (!window.confirm('¿Está seguro de eliminar este usuario?')) return
     
     try {
+      await deleteUsuario(id)
       setUsuarios(prev => prev.filter(u => u.id !== id))
-      console.log(`(Simulado) Usuario ${id} eliminado`)
+      console.log(`Usuario ${id} eliminado`)
     } catch (err) {
       alert('Error: ' + (err instanceof Error ? err.message : 'Error desconocido'))
     }
@@ -98,6 +81,45 @@ export default function Admin() {
   const verDetalles = (usuario: Usuario) => {
     setUsuarioSeleccionado(usuario)
     setMostrarModal(true)
+  }
+
+  const abrirEdicion = (usuario: Usuario) => {
+    setIsEditing(true)
+    setEditableUsuario({
+      id: usuario.id,
+      nombre: usuario.nombre,
+      email: usuario.email,
+      tipoUsuario: usuario.tipoUsuario,
+      activo: usuario.activo,
+      matricula: usuario.matricula ?? null,
+      carrera: usuario.carrera ?? null,
+      semestre: usuario.semestre ?? null,
+      areaCoordinacion: usuario.areaCoordinacion ?? null,
+      nivelAcceso: usuario.nivelAcceso ?? null,
+      divisiones: usuario.divisiones ?? null,
+    })
+    setUsuarioSeleccionado(usuario)
+    setMostrarModal(true)
+  }
+
+  const handleSaveEdicion = async () => {
+    if (!editableUsuario) return
+    try {
+      const updated = await updateUsuario(editableUsuario)
+      setUsuarios(prev => prev.map(u => u.id === updated.id ? updated : u))
+      setMostrarModal(false)
+      setIsEditing(false)
+      setEditableUsuario(null)
+    } catch (err) {
+      alert('Error al guardar: ' + (err instanceof Error ? err.message : 'Error desconocido'))
+    }
+  }
+
+  const handleCancelEdicion = () => {
+    setIsEditing(false)
+    setEditableUsuario(null)
+    // mantener los detalles si estaban abiertos
+    // setMostrarModal(false)
   }
 
   const usuariosFiltrados = usuarios.filter(u =>
@@ -371,8 +393,9 @@ export default function Admin() {
                               </button>
 
                               <button
-                                className="group p-2.5 bg-amber-100 text-amber-600 rounded-lg hover:bg-amber-600 hover:text-white transition-all shadow-sm hover:shadow-md hover:scale-110 cursor-not-allowed opacity-80"
-                                title="Editar (próximamente)"
+                                onClick={() => abrirEdicion(usuario)}
+                                className="group p-2.5 bg-amber-100 text-amber-600 rounded-lg hover:bg-amber-600 hover:text-white transition-all shadow-sm hover:shadow-md hover:scale-110"
+                                title="Editar"
                               >
                                 <Pencil size={16} />
                               </button>
@@ -409,81 +432,183 @@ export default function Admin() {
               </div>
               
               <div className="p-8 space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200">
-                    <p className="text-xs text-slate-600 font-bold uppercase tracking-wide mb-1 flex items-center gap-1">
-                      <Hash size={14} /> ID
-                    </p>
-                    <p className="text-2xl font-bold text-slate-800">#{usuarioSeleccionado.id}</p>
+                {isEditing && editableUsuario ? (
+                  <div className="space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs text-slate-600 font-bold mb-1">Nombre</label>
+                        <input
+                          value={editableUsuario.nombre ?? ''}
+                          onChange={(e) => setEditableUsuario(prev => prev ? { ...prev, nombre: e.target.value } : prev)}
+                          className="w-full px-4 py-3 border rounded-xl"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-600 font-bold mb-1">Email</label>
+                        <input
+                          value={editableUsuario.email ?? ''}
+                          onChange={(e) => setEditableUsuario(prev => prev ? { ...prev, email: e.target.value } : prev)}
+                          className="w-full px-4 py-3 border rounded-xl"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-600 font-bold mb-1">Tipo</label>
+                        <select
+                          value={editableUsuario.tipoUsuario ?? 'PROFESOR'}
+                          onChange={(e) => setEditableUsuario(prev => prev ? { ...prev, tipoUsuario: e.target.value as TipoUsuario } : prev)}
+                          className="w-full px-4 py-3 border rounded-xl"
+                        >
+                          <option value="COORDINADOR">COORDINADOR</option>
+                          <option value="PROFESOR">PROFESOR</option>
+                          <option value="ALUMNO">ALUMNO</option>
+                        </select>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <label className="text-sm font-medium">Activo</label>
+                        <input
+                          type="checkbox"
+                          checked={!!editableUsuario.activo}
+                          onChange={(e) => setEditableUsuario(prev => prev ? { ...prev, activo: e.target.checked } : prev)}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Campos específicos según tipo */}
+                    {editableUsuario.tipoUsuario === 'ALUMNO' && (
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <input
+                          placeholder="Matrícula"
+                          value={editableUsuario.matricula ?? ''}
+                          onChange={(e) => setEditableUsuario(prev => prev ? { ...prev, matricula: e.target.value } : prev)}
+                          className="px-4 py-3 border rounded-xl"
+                        />
+                        <input
+                          placeholder="Carrera"
+                          value={editableUsuario.carrera ?? ''}
+                          onChange={(e) => setEditableUsuario(prev => prev ? { ...prev, carrera: e.target.value } : prev)}
+                          className="px-4 py-3 border rounded-xl"
+                        />
+                        <input
+                          type="number"
+                          placeholder="Semestre"
+                          value={editableUsuario.semestre ?? ''}
+                          onChange={(e) => setEditableUsuario(prev => prev ? { ...prev, semestre: e.target.value ? Number(e.target.value) : null } : prev)}
+                          className="px-4 py-3 border rounded-xl"
+                        />
+                      </div>
+                    )}
+
+                    {editableUsuario.tipoUsuario === 'COORDINADOR' && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <input
+                          placeholder="Área de Coordinación"
+                          value={editableUsuario.areaCoordinacion ?? ''}
+                          onChange={(e) => setEditableUsuario(prev => prev ? { ...prev, areaCoordinacion: e.target.value } : prev)}
+                          className="px-4 py-3 border rounded-xl"
+                        />
+                        <input
+                          placeholder="Nivel de Acceso"
+                          value={editableUsuario.nivelAcceso ?? ''}
+                          onChange={(e) => setEditableUsuario(prev => prev ? { ...prev, nivelAcceso: e.target.value } : prev)}
+                          className="px-4 py-3 border rounded-xl"
+                        />
+                      </div>
+                    )}
+
+                    <div className="flex justify-end gap-3 pt-4">
+                      <button
+                        onClick={handleCancelEdicion}
+                        className="px-6 py-3 rounded-xl bg-slate-100 font-semibold"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        onClick={handleSaveEdicion}
+                        className="px-6 py-3 rounded-xl bg-amber-600 text-white font-bold"
+                      >
+                        Guardar
+                      </button>
+                    </div>
                   </div>
-                  <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200">
-                    <p className="text-xs text-slate-600 font-bold uppercase tracking-wide mb-1">Tipo</p>
-                    <span className={`inline-block px-4 py-2 rounded-xl text-sm font-bold ${getTipoConfig(usuarioSeleccionado.tipoUsuario).badge}`}>
-                      {usuarioSeleccionado.tipoUsuario}
-                    </span>
+                ) : (
+                  <div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200">
+                        <p className="text-xs text-slate-600 font-bold uppercase tracking-wide mb-1 flex items-center gap-1">
+                          <Hash size={14} /> ID
+                        </p>
+                        <p className="text-2xl font-bold text-slate-800">#{usuarioSeleccionado.id}</p>
+                      </div>
+                      <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200">
+                        <p className="text-xs text-slate-600 font-bold uppercase tracking-wide mb-1">Tipo</p>
+                        <span className={`inline-block px-4 py-2 rounded-xl text-sm font-bold ${getTipoConfig(usuarioSeleccionado.tipoUsuario).badge}`}>
+                          {usuarioSeleccionado.tipoUsuario}
+                        </span>
+                      </div>
+                      <div className="md:col-span-2 bg-slate-50 p-5 rounded-2xl border border-slate-200">
+                        <p className="text-xs text-slate-600 font-bold uppercase tracking-wide mb-1">Nombre Completo</p>
+                        <p className="text-xl font-bold text-slate-800">{usuarioSeleccionado.nombre}</p>
+                      </div>
+                      <div className="md:col-span-2 bg-slate-50 p-5 rounded-2xl border border-slate-200">
+                        <p className="text-xs text-slate-600 font-bold uppercase tracking-wide mb-1">Email</p>
+                        <p className="text-lg text-slate-700 font-medium">{usuarioSeleccionado.email}</p>
+                      </div>
+
+                      {/* Campos específicos */}
+                      {usuarioSeleccionado.matricula && (
+                        <div className="bg-gradient-to-br from-indigo-50 to-blue-50 p-5 rounded-2xl border-2 border-indigo-200">
+                          <p className="text-xs text-indigo-700 font-bold uppercase tracking-wide mb-1">Matrícula</p>
+                          <p className="text-xl font-bold text-indigo-900">{usuarioSeleccionado.matricula}</p>
+                        </div>
+                      )}
+
+                      {usuarioSeleccionado.carrera && (
+                        <div className="bg-gradient-to-br from-teal-50 to-cyan-50 p-5 rounded-2xl border-2 border-teal-200">
+                          <p className="text-xs text-teal-700 font-bold uppercase tracking-wide mb-1 flex items-center gap-1">
+                            <Cap size={14} /> Carrera
+                          </p>
+                          <p className="text-lg font-semibold text-teal-900">{usuarioSeleccionado.carrera}</p>
+                        </div>
+                      )}
+
+                      {usuarioSeleccionado.semestre && (
+                        <div className="bg-gradient-to-br from-emerald-50 to-green-50 p-5 rounded-2xl border-2 border-emerald-200">
+                          <p className="text-xs text-emerald-700 font-bold uppercase tracking-wide mb-1 flex items-center gap-1">
+                            <Calendar size={14} /> Semestre
+                          </p>
+                          <p className="text-2xl font-bold text-emerald-900">{usuarioSeleccionado.semestre}°</p>
+                        </div>
+                      )}
+
+                      {usuarioSeleccionado.areaCoordinacion && (
+                        <div className="bg-gradient-to-br from-purple-50 to-pink-50 p-5 rounded-2xl border-2 border-purple-200">
+                          <p className="text-xs text-purple-700 font-bold uppercase tracking-wide mb-1 flex items-center gap-1">
+                            <Building size={14} /> Área de Coordinación
+                          </p>
+                          <p className="text-lg font-semibold text-purple-900">{usuarioSeleccionado.areaCoordinacion}</p>
+                        </div>
+                      )}
+
+                      {usuarioSeleccionado.nivelAcceso && (
+                        <div className="bg-gradient-to-br from-amber-50 to-orange-50 p-5 rounded-2xl border-2 border-amber-200">
+                          <p className="text-xs text-amber-700 font-bold uppercase tracking-wide mb-1 flex items-center gap-1">
+                            <Shield size={14} /> Nivel de Acceso
+                          </p>
+                          <p className="text-xl font-bold text-amber-900">{usuarioSeleccionado.nivelAcceso}</p>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex justify-end pt-4">
+                      <button
+                        onClick={() => setMostrarModal(false)}
+                        className="px-8 py-3 bg-gradient-to-r from-slate-700 to-slate-800 hover:from-slate-800 hover:to-slate-900 text-white rounded-xl font-bold transition-all shadow-lg hover:shadow-xl hover:scale-105"
+                      >
+                        Cerrar
+                      </button>
+                    </div>
                   </div>
-                  <div className="md:col-span-2 bg-slate-50 p-5 rounded-2xl border border-slate-200">
-                    <p className="text-xs text-slate-600 font-bold uppercase tracking-wide mb-1">Nombre Completo</p>
-                    <p className="text-xl font-bold text-slate-800">{usuarioSeleccionado.nombre}</p>
-                  </div>
-                  <div className="md:col-span-2 bg-slate-50 p-5 rounded-2xl border border-slate-200">
-                    <p className="text-xs text-slate-600 font-bold uppercase tracking-wide mb-1">Email</p>
-                    <p className="text-lg text-slate-700 font-medium">{usuarioSeleccionado.email}</p>
-                  </div>
-
-                  {/* Campos específicos */}
-                  {usuarioSeleccionado.matricula && (
-                    <div className="bg-gradient-to-br from-indigo-50 to-blue-50 p-5 rounded-2xl border-2 border-indigo-200">
-                      <p className="text-xs text-indigo-700 font-bold uppercase tracking-wide mb-1">Matrícula</p>
-                      <p className="text-xl font-bold text-indigo-900">{usuarioSeleccionado.matricula}</p>
-                    </div>
-                  )}
-
-                  {usuarioSeleccionado.carrera && (
-                    <div className="bg-gradient-to-br from-teal-50 to-cyan-50 p-5 rounded-2xl border-2 border-teal-200">
-                      <p className="text-xs text-teal-700 font-bold uppercase tracking-wide mb-1 flex items-center gap-1">
-                        <Cap size={14} /> Carrera
-                      </p>
-                      <p className="text-lg font-semibold text-teal-900">{usuarioSeleccionado.carrera}</p>
-                    </div>
-                  )}
-
-                  {usuarioSeleccionado.semestre && (
-                    <div className="bg-gradient-to-br from-emerald-50 to-green-50 p-5 rounded-2xl border-2 border-emerald-200">
-                      <p className="text-xs text-emerald-700 font-bold uppercase tracking-wide mb-1 flex items-center gap-1">
-                        <Calendar size={14} /> Semestre
-                      </p>
-                      <p className="text-2xl font-bold text-emerald-900">{usuarioSeleccionado.semestre}°</p>
-                    </div>
-                  )}
-
-                  {usuarioSeleccionado.areaCoordinacion && (
-                    <div className="bg-gradient-to-br from-purple-50 to-pink-50 p-5 rounded-2xl border-2 border-purple-200">
-                      <p className="text-xs text-purple-700 font-bold uppercase tracking-wide mb-1 flex items-center gap-1">
-                        <Building size={14} /> Área de Coordinación
-                      </p>
-                      <p className="text-lg font-semibold text-purple-900">{usuarioSeleccionado.areaCoordinacion}</p>
-                    </div>
-                  )}
-
-                  {usuarioSeleccionado.nivelAcceso && (
-                    <div className="bg-gradient-to-br from-amber-50 to-orange-50 p-5 rounded-2xl border-2 border-amber-200">
-                      <p className="text-xs text-amber-700 font-bold uppercase tracking-wide mb-1 flex items-center gap-1">
-                        <Shield size={14} /> Nivel de Acceso
-                      </p>
-                      <p className="text-xl font-bold text-amber-900">{usuarioSeleccionado.nivelAcceso}</p>
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex justify-end pt-4">
-                  <button
-                    onClick={() => setMostrarModal(false)}
-                    className="px-8 py-3 bg-gradient-to-r from-slate-700 to-slate-800 hover:from-slate-800 hover:to-slate-900 text-white rounded-xl font-bold transition-all shadow-lg hover:shadow-xl hover:scale-105"
-                  >
-                    Cerrar
-                  </button>
-                </div>
+                )}
               </div>
             </div>
           </div>
