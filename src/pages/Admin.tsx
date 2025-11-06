@@ -21,7 +21,7 @@ import {
 } from 'lucide-react'
 
 import type { Usuario, UsuarioEditDto, TipoUsuario } from '../interfaces/usuario'
-import { getUsuarios, updateUsuario, updateUsuarioStatus, deleteUsuario } from '../services/usuariosService'
+import { getUsuarios, updateUsuario, updateUsuarioStatus, deleteUsuario, createUsuario } from '../services/usuariosService'
 
 export default function Admin() {
   const [usuarios, setUsuarios] = useState<Usuario[]>([])
@@ -33,6 +33,9 @@ export default function Admin() {
   const [error, setError] = useState<string | null>(null)
   const [mostrarModal, setMostrarModal] = useState(false)
   const [usuarioSeleccionado, setUsuarioSeleccionado] = useState<Usuario | null>(null)
+  const [isCreating, setIsCreating] = useState(false)
+  const [nuevoUsuario, setNuevoUsuario] = useState<Partial<UsuarioEditDto> | null>(null)
+  const [creatingLoading, setCreatingLoading] = useState(false)
 
   useEffect(() => {
     cargarUsuarios()
@@ -122,6 +125,34 @@ export default function Admin() {
     // setMostrarModal(false)
   }
 
+  const handleCreateUsuario = async () => {
+    if (!nuevoUsuario) return
+    if (!nuevoUsuario.nombre || !nuevoUsuario.email || !nuevoUsuario.tipoUsuario) {
+      alert('Por favor completa nombre, email y tipo de usuario')
+      return
+    }
+
+    setCreatingLoading(true)
+    try {
+      const created = await createUsuario(nuevoUsuario as any)
+      // Añadir al principio de la lista para visibilidad inmediata
+      setUsuarios(prev => [created, ...prev])
+      setMostrarModal(false)
+      setIsCreating(false)
+      setNuevoUsuario(null)
+    } catch (err) {
+      alert('Error al crear usuario: ' + (err instanceof Error ? err.message : 'Error desconocido'))
+    } finally {
+      setCreatingLoading(false)
+    }
+  }
+
+  const handleCancelCrear = () => {
+    setIsCreating(false)
+    setNuevoUsuario(null)
+    setMostrarModal(false)
+  }
+
   const usuariosFiltrados = usuarios.filter(u =>
     u.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
     u.email.toLowerCase().includes(busqueda.toLowerCase()) ||
@@ -187,6 +218,17 @@ export default function Admin() {
             >
               <RefreshCw size={20} className="group-hover:rotate-180 transition-transform duration-500" />
               Actualizar
+            </button>
+            <button
+              onClick={() => {
+                setIsCreating(true)
+                setNuevoUsuario({ nombre: '', email: '', tipoUsuario: 'PROFESOR', activo: true })
+                setMostrarModal(true)
+              }}
+              className="group ml-3 px-6 py-3 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white rounded-xl font-semibold flex items-center gap-3 transition-all shadow-lg hover:shadow-xl hover:scale-105"
+            >
+              <User size={20} />
+              Nuevo usuario
             </button>
           </div>
         </div>
@@ -415,6 +457,117 @@ export default function Admin() {
                   )}
                 </tbody>
               </table>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de creación */}
+        {mostrarModal && isCreating && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+            <div className="bg-white rounded-3xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto animate-in zoom-in duration-300">
+              <div className="p-8 border-b">
+                <h2 className="text-2xl font-bold">Crear nuevo usuario</h2>
+                <p className="text-slate-500">Complete la información para crear un usuario</p>
+              </div>
+
+              <div className="p-8 space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs text-slate-600 font-bold mb-1">Nombre</label>
+                    <input
+                      value={nuevoUsuario?.nombre ?? ''}
+                      onChange={(e) => setNuevoUsuario(prev => ({ ...(prev ?? {}), nombre: e.target.value }))}
+                      className="w-full px-4 py-3 border rounded-xl"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-600 font-bold mb-1">Email</label>
+                    <input
+                      value={nuevoUsuario?.email ?? ''}
+                      onChange={(e) => setNuevoUsuario(prev => ({ ...(prev ?? {}), email: e.target.value }))}
+                      className="w-full px-4 py-3 border rounded-xl"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-600 font-bold mb-1">Tipo</label>
+                    <select
+                      value={nuevoUsuario?.tipoUsuario ?? 'PROFESOR'}
+                      onChange={(e) => setNuevoUsuario(prev => ({ ...(prev ?? {}), tipoUsuario: e.target.value as TipoUsuario }))}
+                      className="w-full px-4 py-3 border rounded-xl"
+                    >
+                      <option value="COORDINADOR">COORDINADOR</option>
+                      <option value="PROFESOR">PROFESOR</option>
+                      <option value="ALUMNO">ALUMNO</option>
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <label className="text-sm font-medium">Activo</label>
+                    <input
+                      type="checkbox"
+                      checked={!!nuevoUsuario?.activo}
+                      onChange={(e) => setNuevoUsuario(prev => ({ ...(prev ?? {}), activo: e.target.checked }))}
+                    />
+                  </div>
+                </div>
+
+                {/* Campos específicos según tipo */}
+                {nuevoUsuario?.tipoUsuario === 'ALUMNO' && (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <input
+                      placeholder="Matrícula"
+                      value={nuevoUsuario?.matricula ?? ''}
+                      onChange={(e) => setNuevoUsuario(prev => ({ ...(prev ?? {}), matricula: e.target.value }))}
+                      className="px-4 py-3 border rounded-xl"
+                    />
+                    <input
+                      placeholder="Carrera"
+                      value={nuevoUsuario?.carrera ?? ''}
+                      onChange={(e) => setNuevoUsuario(prev => ({ ...(prev ?? {}), carrera: e.target.value }))}
+                      className="px-4 py-3 border rounded-xl"
+                    />
+                    <input
+                      type="number"
+                      placeholder="Semestre"
+                      value={nuevoUsuario?.semestre ?? ''}
+                      onChange={(e) => setNuevoUsuario(prev => ({ ...(prev ?? {}), semestre: e.target.value ? Number(e.target.value) : undefined }))}
+                      className="px-4 py-3 border rounded-xl"
+                    />
+                  </div>
+                )}
+
+                {nuevoUsuario?.tipoUsuario === 'COORDINADOR' && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <input
+                      placeholder="Área de Coordinación"
+                      value={nuevoUsuario?.areaCoordinacion ?? ''}
+                      onChange={(e) => setNuevoUsuario(prev => ({ ...(prev ?? {}), areaCoordinacion: e.target.value }))}
+                      className="px-4 py-3 border rounded-xl"
+                    />
+                    <input
+                      placeholder="Nivel de Acceso"
+                      value={nuevoUsuario?.nivelAcceso ?? ''}
+                      onChange={(e) => setNuevoUsuario(prev => ({ ...(prev ?? {}), nivelAcceso: e.target.value }))}
+                      className="px-4 py-3 border rounded-xl"
+                    />
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-3 pt-4">
+                  <button
+                    onClick={handleCancelCrear}
+                    className="px-6 py-3 rounded-xl bg-slate-100 font-semibold"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={handleCreateUsuario}
+                    disabled={creatingLoading}
+                    className="px-6 py-3 rounded-xl bg-emerald-600 text-white font-bold"
+                  >
+                    {creatingLoading ? 'Guardando...' : 'Crear'}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         )}
