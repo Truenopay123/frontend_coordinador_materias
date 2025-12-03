@@ -1,7 +1,7 @@
 import api from '../api/axiosConfig'
 import type { Usuario, UsuarioEditDto } from '../interfaces/usuario'
 
-const base = '/usuarios'
+const base = '/api/usuarios'
 
 
 
